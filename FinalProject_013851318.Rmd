@@ -1,0 +1,413 @@
+---
+title: "FINAL PROJECT_SamanthaF."
+author: "Samantha N. Figueroa Lopez"
+date: "2025-12-05"
+output:
+  html_document:
+    theme: journal
+    toc: true
+    toc_float: true
+---
+
+# 1. Introduction
+
+Air pollution is a major environmental and public health concern, especially in large cities where traffic, industry, and weather conditions all contribute to changing emission levels. Understanding how pollutants behave over time can help inform regulatory policy, urban planning, and public health strategies.
+
+In this project, I analyze an hourly air quality dataset from an urban monitoring station. The data were provided by my instructor and originate from the Kaggle “Air Quality Data Set,” which is based on the UCI Machine Learning Repository. I focus on pollutants such as **CO**, **NOx**, **NO2**, and **C6H6 (benzene)**, as well as environmental variables like temperature and humidity.
+
+My main research questions are:
+
+1. How do pollutant levels vary over time (hourly, daily, and between weekdays and weekends)?
+2. Do pollutant concentrations peak during typical rush hours (7–9 AM, 5–7 PM)?
+3. How strongly are sensor readings and pollutant concentrations related to environmental factors such as temperature and humidity?
+
+This dataset has been used in prior work by De Vito et al. (2008) and others to study air quality using low-cost sensors and to explore modeling and prediction of pollutants. I care about this topic because air quality has a direct impact on human health, especially in dense urban areas, and understanding these patterns is a first step toward better mitigation strategies.
+
+This dataset represents an **observational study**, since no experimental manipulation was performed. The monitoring station simply recorded real-world conditions over time.
+
+# 2 Data
+
+## 2.1 Data Source
+
+The data come from the **Kaggle Air Quality Data Set**, curated by Federico Soriano and derived from the **UCI Machine Learning Repository** “Air Quality” dataset originally collected and published by De Vito et al. (2008).
+
+- Kaggle: *Air Quality Data Set* (Soriano, F.)  
+- Original source: De Vito et al., UCI Machine Learning Repository
+
+## 2.2 Data Collection
+
+Measurements were collected from an air quality monitoring station located in an urban area. The station recorded hourly measurements of several pollutants using metal oxide sensors, along with meteorological variables. These sensors captured real-world fluctuations over many months, producing a time-series dataset of environmental conditions.
+
+## 2.3 Cases
+
+Each row in the dataset represents a single **hourly observation** from the monitoring station. In other words, each case corresponds to the air quality and environmental conditions at one hour of one day.
+
+## 2.4 Variables
+
+In this project, I focus on:
+
+- **Pollutants**  
+  - `CO(GT)` (CO concentration)  
+  - `NOx(GT)` (NOx concentration)  
+  - `NO2(GT)` (NO2 concentration)  
+  - `C6H6(GT)` (benzene concentration)
+
+- **Sensor readings**  
+  - PT08 sensor responses (e.g., `PT08.S1(CO)`, `PT08.S2(NMHC)`, `PT08.S3(NOx)`, `PT08.S4(NO2)`, `PT08.S5(O3)`)
+
+- **Weather**  
+  - Temperature (`T`)  
+  - Relative humidity (`RH`)  
+  - Absolute humidity (`AH`)
+
+- **Time-related variables**  
+  - Date and time  
+  - Hour of day  
+  - Day of week  
+  - Weekend indicator (weekday vs. weekend)
+
+These variables allow me to explore how pollutants change over time and how they relate to weather and sensor signals.
+
+## 2.5 Type of Study
+
+This is an **observational study**. The monitoring station recorded pollutant levels and environmental conditions as they occurred, without any intervention or experimental treatment.
+
+## 2.6 Data Cleaning (Brief)
+
+To prepare the data for analysis, I:
+
+- Parsed date and time into a single datetime variable.  
+- Replaced sentinel values of **-200** (used to indicate missing readings) with `NA`.  
+- Selected relevant pollutant, sensor, and weather variables.  
+- Created additional time-based variables such as date, hour, weekday, and a weekend indicator.  
+- Saved a cleaned version of the dataset for further analysis.
+
+These steps ensure that missing values are handled appropriately and that time-based patterns can be studied clearly.
+
+---
+
+# 3. Load Required Libraries
+
+```{r setup, message=FALSE, warning=FALSE}
+suppressPackageStartupMessages({
+  library(tidyverse)
+  library(lubridate)
+  library(janitor)
+  library(knitr)
+  library(skimr)
+  library(patchwork)
+  library(scales)
+  library(zoo)
+  library(stringr)
+  library(readr)
+  library (broom)
+})
+
+knitr::opts_chunk$set(
+  message = FALSE,
+  warning = FALSE,
+  fig.width = 8,
+  fig.height = 5,
+  dpi = 110
+)
+```
+
+## 4 Load and Clean data 
+
+
+### grabbing the file from kaggle 
+```{r}
+candidate_paths <- c("AirQualityUCI.csv", "AirQuality.csv")
+existing <- candidate_paths[file.exists(candidate_paths)]
+
+if (length(existing) == 0) {
+stop("Place 'AirQualityUCI.csv' or 'AirQuality.csv' in the same folder as this Rmd.")
+}
+
+data_path <- existing[1]
+cat("Using data file:", data_path, "\n")
+```
+
+### Read using the correct delimiter (;) and decimal mark (,)
+
+```{r}
+aq_raw <- read_delim(
+data_path,
+delim = ";",
+locale = locale(decimal_mark = ","),
+na = c("", "NA"),
+trim_ws = TRUE,
+show_col_types = FALSE
+) %>%
+clean_names()
+```
+
+### Drop any completely empty column (the original file often has one at the end)
+```{r}
+aq_raw <- aq_raw %>%
+select(where(~ !all(is.na(.x))))
+```
+
+```{r}
+# Check that we have date and time columns after clean_names()
+
+if (!all(c("date", "time") %in% names(aq_raw))) {
+stop("Expected 'date' and 'time' columns after cleaning names, but did not find them.")
+}
+
+# Parse date and time into a single datetime
+
+aq <- aq_raw %>%
+mutate(
+date_parsed = dmy(date),
+time_parsed = hms(str_replace_all(time, "\\.", ":")),
+datetime    = as_datetime(date_parsed + time_parsed)
+)
+
+# Select key variables (only those that actually exist)
+
+vars <- c(
+"datetime", "co_gt", "c6h6_gt", "nox_gt", "no2_gt",
+"pt08_s1_co", "pt08_s2_nmhc", "pt08_s3_no2",
+"pt08_s4_no2", "pt08_s5_o3",
+"t", "rh", "ah"
+)
+
+aq <- aq %>%
+select(any_of(vars))
+
+# Convert character numeric columns to real numeric
+
+aq <- aq %>%
+mutate(across(where(is.character), ~ suppressWarnings(as.numeric(.x))))
+
+# Replace the sentinel -200 with NA
+
+aq <- aq %>%
+mutate(across(where(is.numeric), ~ ifelse(.x == -200, NA_real_, .x)))
+
+# Create time-related variables
+
+aq <- aq %>%
+mutate(
+date       = as_date(datetime),
+hour       = hour(datetime),
+wday       = wday(datetime, label = TRUE, abbr = TRUE),
+is_weekend = wday %in% c("Sat", "Sun")
+) %>%
+relocate(date, hour, wday, is_weekend, .after = datetime)
+
+glimpse(aq)
+```
+
+## 4.1 missingness
+
+```{r}
+kable(head(aq, 15), caption = "First 15 rows of the air quality data")
+
+miss_tbl <- aq %>%
+summarise(across(everything(), ~ sum(is.na(.)))) %>%
+pivot_longer(everything(), names_to = "variable", values_to = "n_missing") %>%
+arrange(desc(n_missing))
+
+kable(miss_tbl, caption = "Number of missing values by variable")
+
+skim(aq %>% select(where(is.numeric)))
+```
+
+## 4.2 Distribution of Pollutants 
+
+```{r} 
+pollutants <- c("co_gt", "c6h6_gt", "nox_gt", "no2_gt")
+pollutants <- pollutants[pollutants %in% names(aq)]
+
+pollutant_plots <- lapply(pollutants, function(v) {
+ggplot(aq, aes(x = .data[[v]])) +
+geom_histogram(bins = 40, fill = "steelblue") +
+labs(
+title = paste("Distribution of", v),
+x = v,
+y = "Count"
+)
+})
+
+if (length(pollutant_plots) > 0) {
+wrap_plots(pollutant_plots, ncol = 2)
+}
+```
+
+## 4.3 Hourly and daily trends from the data 
+
+```{r} 
+# Hourly averages
+
+hour_summary <- aq %>%
+group_by(hour) %>%
+summarise(across(all_of(pollutants), ~ mean(.x, na.rm = TRUE))) %>%
+ungroup()
+
+p_hour <- hour_summary %>%
+pivot_longer(-hour, names_to = "var", values_to = "mean_value") %>%
+ggplot(aes(hour, mean_value)) +
+geom_line() +
+facet_wrap(~ var, scales = "free_y") +
+labs(
+title = "Average pollutant level by hour of day",
+x = "Hour",
+y = "Mean level"
+)
+
+# Daily averages and 7-day rolling means
+
+daily_summary <- aq %>%
+group_by(date) %>%
+summarise(across(all_of(pollutants), ~ mean(.x, na.rm = TRUE))) %>%
+ungroup()
+
+p_daily <- daily_summary %>%
+pivot_longer(-date, names_to = "var", values_to = "daily_mean") %>%
+group_by(var) %>%
+arrange(date) %>%
+mutate(roll7 = zoo::rollapply(daily_mean, 7, mean, align = "right", fill = NA)) %>%
+ggplot(aes(date, roll7)) +
+geom_line() +
+facet_wrap(~ var, scales = "free_y") +
+labs(
+title = "7-day rolling mean of daily pollutant levels",
+x = "Date",
+y = "7-day mean"
+)
+
+p_hour / p_daily
+
+```
+The hourly plots show that NO2 and NOx tend to peak in the morning and evening, which is consistent with rush-hour traffic patterns. CO shows a similar shape but with slightly lower amplitude.
+
+## 4.4 Weekday vs Weekend 
+
+```{r} 
+wd_we <- aq %>%
+group_by(is_weekend) %>%
+summarise(across(all_of(pollutants), ~ mean(.x, na.rm = TRUE))) %>%
+ungroup() %>%
+pivot_longer(-is_weekend, names_to = "variable", values_to = "mean_level")
+
+ggplot(wd_we, aes(is_weekend, mean_level)) +
+geom_col(fill = "#0072B2") +
+facet_wrap(~ variable, scales = "free_y") +
+labs(
+title = "Mean pollutant levels: weekday vs weekend",
+x = "Weekend?",
+y = "Mean level"
+)
+
+```
+
+## 4.5 Correlation overview 
+
+```{r} 
+num_df <- aq %>% select(where(is.numeric))
+
+if (ncol(num_df) >= 2) {
+corr <- cor(num_df, use = "pairwise.complete.obs")
+corr_tbl <- as_tibble(corr, rownames = "var1") %>%
+pivot_longer(-var1, names_to = "var2", values_to = "r") %>%
+filter(var1 < var2) %>%
+arrange(desc(abs(r)))
+
+kable(
+head(corr_tbl, 15),
+digits = 3,
+caption = "Top correlations (absolute value)"
+)
+}
+
+```
+# 5. Inference / data analysis
+
+This section uses two tools from class to connect the exploratory patterns back to more formal analysis: a hypothesis test and a simple regression model.
+
+## 5.1 Weekday vs. weekend NO2 levels (t-test)
+
+```{r ttest_table, message=FALSE, warning=FALSE}
+library(broom)
+
+# Run t-test on NO2 by weekend/weekday
+t_no2 <- t.test(no2_gt ~ is_weekend, data = aq)
+
+# Compute group means for each day type
+means <- aq %>%
+  group_by(is_weekend) %>%
+  summarise(mean_no2 = mean(no2_gt, na.rm = TRUE)) %>%
+  arrange(is_weekend)
+
+# Build a clean summary table
+tidy(t_no2) %>%
+  mutate(
+    mean_weekday = means$mean_no2[means$is_weekend == FALSE],
+    mean_weekend = means$mean_no2[means$is_weekend == TRUE],
+    difference   = estimate
+  ) %>%
+  select(mean_weekday, mean_weekend, difference,
+         conf.low, conf.high, p.value) %>%
+  kable(digits = 3,
+        caption = "T-test: NO2 levels (weekday vs weekend)")
+```
+
+The test compares average NO2 levels on weekdays and weekends. A small p-value suggests that the difference is unlikely to be due to random variation alone and supports the idea that weekday activity leads to higher NO2.
+
+## 5.2 Regression: benzene vs. sensor and weather variables
+
+```{r reg_table, message=FALSE, warning=FALSE}
+
+# Build regression dataset
+reg_data <- aq %>%
+  select(c6h6_gt, pt08_s2_nmhc, t, rh) %>%
+  drop_na()
+
+# Fit linear model
+model_c6h6 <- lm(c6h6_gt ~ pt08_s2_nmhc + t + rh, data = reg_data)
+
+# Coefficient table
+tidy(model_c6h6) %>%
+  select(term, estimate, std.error, statistic, p.value) %>%
+  kable(digits = 4,
+        caption = "Regression coefficients predicting benzene (C6H6)")
+```
+
+
+In this model, benzene concentration (C6H6) is predicted from one of the sensor readings plus temperature and humidity. The coefficients show how benzene levels tend to change when each predictor changes, holding the others fixed.
+
+```{r}
+
+par(mfrow = c(1, 2))
+plot(model_c6h6, which = 1) # residuals vs fitted
+plot(model_c6h6, which = 2) # normal Q-Q
+par(mfrow = c(1, 1))
+```
+
+The diagnostic plots help check whether the linear model assumptions (rough linearity, roughly constant variance, and approximate normality of residuals) are reasonable.
+The residuals vs. fitted plot does not show a strong pattern, suggesting the linear form is reasonable. The Q–Q plot is close to a straight line, so the normality assumption is roughly satisfied, although there are a few deviations in the tails.
+
+# 6. Conclusion
+
+Working with this dataset gave a clearer picture of how pollution behaves over time at one urban monitoring station. Several pollutants show a strong time-of-day pattern, with higher levels during commuting hours. Average levels also tend to be higher on weekdays than on weekends, and the t-test for NO2 supports this idea statistically.
+
+The regression model suggests that a combination of sensor readings and weather variables helps explain variation in benzene concentrations, although the model is simple and not meant to be a perfect predictor. Still, it shows that the sensors are capturing meaningful variation and that environmental conditions matter.
+
+There are some clear limitations. The data come from a single station, so the results should not be treated as city-wide averages. Missing values and occasional sensor problems can also affect estimates. Finally, because this is observational data, we can talk about associations but not strong causal claims.
+
+If I were to extend this project, I would consider adding data from multiple locations, incorporating traffic or external weather data, and trying time-series forecasting methods to see whether short-term pollution levels can be predicted in advance.
+
+# 7. Save cleaned dataset
+```{r}
+
+out_path <- "AirQuality_clean.csv"
+readr::write_csv(aq %>% arrange(datetime), out_path)
+cat("Cleaned CSV saved to:", out_path, "\n")
+```
+
+# 8. References
+
+[1] Soriano, F. Air Quality Data Set. Kaggle.
+[2] De Vito, S., Massera, E., Piga, M., Martinotto, L., & Di Francia, G. (2008). UCI Machine Learning Repository: Air Quality Data Set.
